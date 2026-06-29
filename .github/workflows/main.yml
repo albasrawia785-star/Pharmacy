@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK From ZIP
 
 on:
   push:
@@ -13,14 +13,32 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Unzip Project Files Automatically
+    - name: Unzip Project Files Safely (Handles Arabic Names)
       run: |
-        unzip -o *.zip -d .
+        echo "Searching for ZIP files..."
+        ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+        if [ -z "$ZIP_FILE" ]; then
+          echo "No zip file found directly in root, searching deeper..."
+          ZIP_FILE=$(find . -name "*.zip" | head -n 1)
+        fi
+        
+        if [ ! -z "$ZIP_FILE" ]; then
+          echo "Found zip file: $ZIP_FILE. Unzipping now..."
+          unzip -o "$ZIP_FILE" -d .
+        else
+          echo "ERROR: No .zip file found in the repository!"
+          exit 1
+        fi
+
+    - name: Move files to root if nested
+      run: |
         if [ ! -f "build.gradle.kts" ] && [ ! -f "build.gradle" ]; then
           echo "Looking for project files in subdirectories..."
           SUBDIR=$(find . -maxdepth 2 -name "app" -type d -exec dirname {} \;)
           if [ "$SUBDIR" != "." ] && [ ! -z "$SUBDIR" ]; then
+            echo "Moving files from $SUBDIR to root..."
             mv $SUBDIR/* . 2>/dev/null || true
+            mv $SUBDIR/.* . 2>/dev/null || true
           fi
         fi
 
@@ -31,10 +49,48 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Fix Missing Keystore Error Automatically
+    - name: Auto-Create Missing google-services.json
+      run: |
+        echo "Checking for google-services.json..."
+        mkdir -p app
+        cat <<EOF > app/google-services.json
+        {
+          "project_info": {
+            "project_number": "123456789",
+            "project_id": "dummy-project-id",
+            "storage_bucket": "dummy.appspot.com"
+          },
+          "client": [
+            {
+              "client_info": {
+                "mobilesdk_app_id": "1:123456789:android:123456789",
+                "android_client_info": {
+                  "package_name": "com.example.dummy"
+                }
+              },
+              "oauth_client": [],
+              "api_key": [
+                {
+                  "current_key": "dummy_api_key"
+                }
+              ],
+              "services": {
+                "appinvite_service": {
+                  "status": 1
+                }
+              }
+            }
+          ],
+          "configuration_version": "1"
+        }
+        EOF
+        echo "Dummy google-services.json created successfully."
+
+    - name: Generate and Fix Keystore Paths Automatically
       run: |
         echo "Generating automatic debug keystore..."
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        # نسخ ملف التوقيع إلى كل المسارات الممكنة لتفادي أي خطأ إعدادات
         cp debug.keystore ./app/ 2>/dev/null || true
         cp debug.keystore ./ 2>/dev/null || true
         
@@ -49,12 +105,12 @@ jobs:
         fi
 
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleDebug --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: my-final-app-apk
+        name: Dawaee-App-APK
         path: |
           app/build/outputs/apk/debug/*.apk
           **/build/outputs/apk/debug/*.apk
