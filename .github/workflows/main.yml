@@ -1,4 +1,4 @@
-name: Build Android APK From ZIP
+name: Build Android APK from ZIP
 
 on:
   push:
@@ -13,32 +13,14 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Unzip Project Files Safely (Handles Arabic Names)
+    - name: Unzip Project Files Automatically
       run: |
-        echo "Searching for ZIP files..."
-        ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
-        if [ -z "$ZIP_FILE" ]; then
-          echo "No zip file found directly in root, searching deeper..."
-          ZIP_FILE=$(find . -name "*.zip" | head -n 1)
-        fi
-        
-        if [ ! -z "$ZIP_FILE" ]; then
-          echo "Found zip file: $ZIP_FILE. Unzipping now..."
-          unzip -o "$ZIP_FILE" -d .
-        else
-          echo "ERROR: No .zip file found in the repository!"
-          exit 1
-        fi
-
-    - name: Move files to root if nested
-      run: |
+        unzip -o *.zip -d .
         if [ ! -f "build.gradle.kts" ] && [ ! -f "build.gradle" ]; then
           echo "Looking for project files in subdirectories..."
           SUBDIR=$(find . -maxdepth 2 -name "app" -type d -exec dirname {} \;)
           if [ "$SUBDIR" != "." ] && [ ! -z "$SUBDIR" ]; then
-            echo "Moving files from $SUBDIR to root..."
             mv $SUBDIR/* . 2>/dev/null || true
-            mv $SUBDIR/.* . 2>/dev/null || true
           fi
         fi
 
@@ -49,68 +31,34 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Auto-Create Missing google-services.json
+    - name: Fix Repositories and Injection (403 Error Fix)
       run: |
-        echo "Checking for google-services.json..."
-        mkdir -p app
-        cat <<EOF > app/google-services.json
-        {
-          "project_info": {
-            "project_number": "123456789",
-            "project_id": "dummy-project-id",
-            "storage_bucket": "dummy.appspot.com"
-          },
-          "client": [
-            {
-              "client_info": {
-                "mobilesdk_app_id": "1:123456789:android:123456789",
-                "android_client_info": {
-                  "package_name": "com.example.dummy"
-                }
-              },
-              "oauth_client": [],
-              "api_key": [
-                {
-                  "current_key": "dummy_api_key"
-                }
-              ],
-              "services": {
-                "appinvite_service": {
-                  "status": 1
-                }
-              }
-            }
-          ],
-          "configuration_version": "1"
-        }
-        EOF
-        echo "Dummy google-services.json created successfully."
+        # إصلاح وتأكيد وجود مستودعات جوجل في كل ملفات build.gradle و settings.gradle
+        find . -name "build.gradle" -o -name "settings.gradle" | while read file; do
+          sed -i 's/jcenter()/google()\n        mavenCentral()/g' "$file"
+        done
 
-    - name: Generate and Fix Keystore Paths Automatically
+    - name: Fix Missing Keystore Error Automatically
       run: |
-        echo "Generating automatic debug keystore..."
+        mkdir -p app/src/debug app/
+        keytool -genkey -v -keystore app/src/debug/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-        # نسخ ملف التوقيع إلى كل المسارات الممكنة لتفادي أي خطأ إعدادات
-        cp debug.keystore ./app/ 2>/dev/null || true
-        cp debug.keystore ./ 2>/dev/null || true
-        
-    - name: Grant execute permission for gradlew
+
+    - name: Auto-Create Mock google-services.json
       run: |
-        if [ -f "gradlew" ]; then
-          chmod +x gradlew
-        else
-          echo "gradlew not found, creating a new wrapper..."
-          gradle wrapper
-          chmod +x gradlew
-        fi
+        JSON_CONTENT='{"project_info":{"project_number":"123456789","project_id":"mock-id","storage_bucket":"mock.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456:android:1234","android_client_info":{"package_name":"'$(grep -r "applicationId" app/build.gradle 2>/dev/null | awk -F '"' '{print $2}' | head -n 1 || echo "com.example.app")'"}},"api_key":[{"current_key":"mock_key"}],"services":{"appinvite_service":{"status":1}}}]}'
+        find . -name "app" -type d | while read dir; do
+          echo "$JSON_CONTENT" > "$dir/google-services.json"
+        done
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
 
     - name: Build with Gradle
-      run: ./gradlew assembleDebug --stacktrace
+      run: ./gradlew assembleDebug --no-daemon
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: Dawaee-App-APK
-        path: |
-          app/build/outputs/apk/debug/*.apk
-          **/build/outputs/apk/debug/*.apk
+        name: My-Pharmacy-App
+        path: app/build/outputs/apk/debug/*.apk
