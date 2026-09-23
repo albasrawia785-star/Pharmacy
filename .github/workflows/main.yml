@@ -13,12 +13,27 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      # 1. استخراج ملفات المشروع في حال تم رفع المشروع كملف ZIP
+      - name: Unzip Project Files
+        shell: bash
+        run: |
+          if ls *.zip 1> /dev/null 2>&1; then
+            echo "[UNZIP] Found zip archive, extracting..."
+            unzip *.zip -d temp_unzip || true
+            TARGET_DIR=$(find temp_unzip -name "package.json" -exec dirname {} \;)
+            if [ -n "$TARGET_DIR" ]; then
+              echo "[UNZIP] Found project files in: $TARGET_DIR"
+              cp -r $TARGET_DIR/* .
+            fi
+            rm -rf temp_unzip
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # 1. إعداد بايثون لتشفير التوكن العسكري تلقائياً (متوافق مع ترميز ويندوز)
+      # 2. إعداد بايثون لتشفير التوكن العسكري تلقائياً (متوافق مع ترميز ويندوز)
       - name: Set up Python for Encryption
         uses: actions/setup-python@v5
         with:
@@ -85,16 +100,18 @@ jobs:
               print('[INFO] Using existing credentials from project files.')
           "
 
-      # 2. تثبيت النسخة الخاصة الداعمة لويندوز 7 و 8 والأنوية المزدوجة (32bit & 64bit)
+      # 3. تثبيت النسخة الخاصة الداعمة لويندوز 7 و 8 والأنوية المزدوجة (32bit & 64bit)
       - name: Install Universal Dependencies
+        shell: bash
         run: |
           npm install --force
           npm install --save-dev electron@22.3.27 electron-builder@latest
 
       - name: Build Web Application
+        shell: bash
         run: npm run build
 
-      # 3. إنشاء ملف تشغيل CJS خفيف متوافق مع كافة أنظمة الويندوز
+      # 4. إنشاء ملف تشغيل CJS خفيف متوافق مع كافة أنظمة الويندوز
       - name: Create CJS Entry Point
         shell: bash
         run: |
@@ -127,7 +144,7 @@ jobs:
           });
           EOF
 
-      # 4. معالجة package.json وتوليد النسخة المحمولة + نسخة التثبيت
+      # 5. معالجة package.json وتوليد النسخة المحمولة + نسخة التثبيت
       - name: Configure Package and Build Universal Portable & Setup EXE
         shell: bash
         run: |
@@ -167,7 +184,7 @@ jobs:
           
           npx electron-builder --win portable nsis --x64 --ia32 --config.extraMetadata.main=main.cjs --publish never
 
-      # 5. رفع النسختين النهائية (المرنة المحمولة + التثبيت) للتنزيل الفوري
+      # 6. رفع النسختين النهائية (المرنة المحمولة + التثبيت) للتنزيل الفوري
       - name: Upload Portable & Setup Windows EXEs
         uses: actions/upload-artifact@v4
         with:
