@@ -1,64 +1,175 @@
-name: Build Android APK from ZIP
+name: Build Universal Windows Desktop EXE (Portable & Installer)
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
 
-    - name: Unzip Project Files Automatically
-      run: |
-        unzip -o *.zip -d .
-        if [ ! -f "build.gradle.kts" ] && [ ! -f "build.gradle" ]; then
-          echo "Looking for project files in subdirectories..."
-          SUBDIR=$(find . -maxdepth 2 -name "app" -type d -exec dirname {} \;)
-          if [ "$SUBDIR" != "." ] && [ ! -z "$SUBDIR" ]; then
-            mv $SUBDIR/* . 2>/dev/null || true
-          fi
-        fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
+      # 1. إعداد بايثون لتشفير التوكن العسكري تلقائياً (متوافق مع ترميز ويندوز)
+      - name: Set up Python for Encryption
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Fix Repositories and Injection (403 Error Fix)
-      run: |
-        # إصلاح وتأكيد وجود مستودعات جوجل في كل ملفات build.gradle و settings.gradle
-        find . -name "build.gradle" -o -name "settings.gradle" | while read file; do
-          sed -i 's/jcenter()/google()\n        mavenCentral()/g' "$file"
-        done
+      - name: Smart Encrypt & Inject Database Credentials
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+          RAW_TURSO_URL: ${{ secrets.TURSO_URL || '' }}
+          RAW_TURSO_TOKEN: ${{ secrets.TURSO_TOKEN || '' }}
+        run: |
+          python -c "
+          import os, sys, re, json
 
-    - name: Fix Missing Keystore Error Automatically
-      run: |
-        mkdir -p app/src/debug app/
-        keytool -genkey -v -keystore app/src/debug/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          if sys.stdout.encoding != 'utf-8':
+              try:
+                  sys.stdout.reconfigure(encoding='utf-8')
+              except:
+                  pass
 
-    - name: Auto-Create Mock google-services.json
-      run: |
-        JSON_CONTENT='{"project_info":{"project_number":"123456789","project_id":"mock-id","storage_bucket":"mock.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456:android:1234","android_client_info":{"package_name":"'$(grep -r "applicationId" app/build.gradle 2>/dev/null | awk -F '"' '{print $2}' | head -n 1 || echo "com.example.app")'"}},"api_key":[{"current_key":"mock_key"}],"services":{"appinvite_service":{"status":1}}}]}'
-        find . -name "app" -type d | while read dir; do
-          echo "$JSON_CONTENT" > "$dir/google-services.json"
-        done
+          raw_url = os.environ.get('RAW_TURSO_URL', '').strip()
+          raw_token = os.environ.get('RAW_TURSO_TOKEN', '').strip()
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+          aldion_path = 'aldion.ts'
+          if not os.path.exists(aldion_path):
+              aldion_path = 'src/aldion.ts'
 
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug --no-daemon
+          if raw_url and raw_token:
+              print('[ENCRYPT] Jari tashfeer al-token wa al-rabit...')
+              url_key = [83, 183, 31, 140, 66, 158, 97, 170, 53, 212]
+              token_key = [155, 77, 226, 26, 119, 60, 245, 134, 41, 161, 100, 216]
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: My-Pharmacy-App
-        path: app/build/outputs/apk/debug/*.apk
+              def encrypt_bytes(text, key, salt=7):
+                  return [(ord(c) ^ key[i % len(key)] ^ ((i * salt) & 0xFF)) & 0xFF for i, c in enumerate(text)]
+
+              enc_url_bytes = encrypt_bytes(raw_url, url_key)
+              enc_token_bytes = encrypt_bytes(raw_token, token_key)
+
+              if os.path.exists(aldion_path):
+                  with open(aldion_path, 'r', encoding='utf-8') as f:
+                      content = f.read()
+
+                  content = re.sub(
+                      r'const _CIPHER_TOKEN_BYTES:\s*number\[\]\s*=\s*\[[\s\S]*?\];',
+                      f'const _CIPHER_TOKEN_BYTES: number[] = {json.dumps(enc_token_bytes)};',
+                      content
+                  )
+                  content = re.sub(
+                      r'const _CIPHER_URL_BYTES:\s*number\[\]\s*=\s*\[[\s\S]*?\];',
+                      f'const _CIPHER_URL_BYTES: number[] = {json.dumps(enc_url_bytes)};',
+                      content
+                  )
+                  content = re.sub(r'export const MANUAL_OVERRIDE_TURSO_URL:\s*string\s*=\s*[\"|\'].*?[\"|\'];', 'export const MANUAL_OVERRIDE_TURSO_URL: string = \"\";', content)
+                  content = re.sub(r'export const MANUAL_OVERRIDE_TURSO_TOKEN:\s*string\s*=\s*[\"|\'].*?[\"|\'];', 'export const MANUAL_OVERRIDE_TURSO_TOKEN: string = \"\";', content)
+
+                  with open(aldion_path, 'w', encoding='utf-8') as f:
+                      f.write(content)
+                  print('[SUCCESS] Database credentials encrypted successfully.')
+              else:
+                  print('[WARNING] aldion.ts not found.')
+          else:
+              print('[INFO] Using existing credentials from project files.')
+          "
+
+      # 2. تثبيت النسخة الخاصة الداعمة لويندوز 7 و 8 والأنوية المزدوجة (32bit & 64bit)
+      - name: Install Universal Dependencies
+        run: |
+          npm install --force
+          npm install --save-dev electron@22.3.27 electron-builder@latest
+
+      - name: Build Web Application
+        run: npm run build
+
+      # 3. إنشاء ملف تشغيل CJS خفيف متوافق مع كافة أنظمة الويندوز
+      - name: Create CJS Entry Point
+        shell: bash
+        run: |
+          cat << 'EOF' > main.cjs
+          const { app, BrowserWindow, Menu } = require('electron');
+          const path = require('path');
+
+          function createWindow() {
+            const win = new BrowserWindow({
+              width: 1280,
+              height: 850,
+              minWidth: 950,
+              minHeight: 650,
+              title: "دفتر الديون - نظام إدارة الحسابات",
+              icon: path.join(__dirname, 'dist', 'icon.png'),
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+              }
+            });
+
+            Menu.setApplicationMenu(null);
+            win.loadFile(path.join(__dirname, 'dist', 'index.html'));
+          }
+
+          app.whenReady().then(createWindow);
+
+          app.on('window-all-closed', () => {
+            if (process.platform !== 'darwin') app.quit();
+          });
+          EOF
+
+      # 4. معالجة package.json وتوليد النسخة المحمولة + نسخة التثبيت
+      - name: Configure Package and Build Universal Portable & Setup EXE
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            
+            // إلغاء type module وتحديد ملف التشغيل لمنع ERR_REQUIRE_ESM
+            pkg.main = "main.cjs";
+            delete pkg.type;
+
+            pkg.build = {
+              appId: "com.daftar.aldeyon",
+              productName: "دفتر الديون",
+              directories: { output: "dist_electron" },
+              files: ["dist/**/*", "main.cjs"],
+              win: {
+                target: [
+                  { target: "portable", arch: ["x64", "ia32"] }, // النسخة المحمولة (بدون تثبيت)
+                  { target: "nsis", arch: ["x64", "ia32"] }     // نسخة التثبيت التقليدية
+                ]
+              },
+              portable: {
+                artifactName: "Daftar-Aldeyon-Portable-${arch}.exe"
+              },
+              nsis: {
+                oneClick: false,
+                allowToChangeInstallationDirectory: true,
+                createDesktopShortcut: true,
+                shortcutName: "دفتر الديون",
+                artifactName: "Daftar-Aldeyon-Setup-${arch}.exe"
+              }
+            };
+            
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+          
+          npx electron-builder --win portable nsis --x64 --ia32 --config.extraMetadata.main=main.cjs --publish never
+
+      # 5. رفع النسختين النهائية (المرنة المحمولة + التثبيت) للتنزيل الفوري
+      - name: Upload Portable & Setup Windows EXEs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Daftar-Aldeyon-Windows-EXEs
+          path: dist_electron/*.exe
